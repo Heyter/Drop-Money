@@ -1,71 +1,57 @@
 #pragma semicolon 1
 #include <sdktools>
-
 #pragma newdecls required
 
 #define MONEY_MODEL "models/props/cs_assault/money.mdl"
 
-int money[MAXPLAYERS + 1];
+bool g_bPressedUse[MAXPLAYERS + 1];
+float g_flPressUse[MAXPLAYERS + 1];
 
-public Plugin myinfo =
-{
-	author = "Hejter (HLmod.ru)",
+public Plugin myinfo = {
+	author = "Hikka",
 	description = "Выкидываем нужную сумму денег.",
-	version = "0.1",
-	url = "HLmod.ru",
+	version = "0.2",
 };
 
-public void OnPluginStart()
-{
-	RegConsoleCmd("sm_drop_money", Command_DMoney, "!drop_money <сумма>");
+public void OnPluginStart() {
+	RegConsoleCmd("sm_drop_money", sm_dropmoney, "!drop_money <сумма>");
+	RegConsoleCmd("sm_dropmoney", sm_dropmoney, "!dropmoney <сумма>");
 }
 
-public void OnMapStart()
-{
+public void OnMapStart() {
 	PrecacheModel(MONEY_MODEL, true);
 }
 
-public Action Command_DMoney(int client, int args)
-{
-	if (client && IsClientInGame(client) && IsPlayerAlive(client))
-	{
-		if (args == 1)
-		{
-			int MoneyOffset = FindSendPropOffs("CCSPlayer", "m_iAccount");
-			money[client] = GetEntData(client, MoneyOffset, 4);
-			int money_set = GetEntProp(client, Prop_Send, "m_iAccount");
-			
-			char arg[64];
-			GetCmdArg(1, arg, sizeof(arg));
-			int amount = StringToInt(arg);
-			
-			if (money[client] > 0)
-			{
-				if (amount > 0)
-				{
-					if (amount > money[client]) amount = money[client];
-					SetEntProp(client, Prop_Send, "m_iAccount", money_set - amount);
-					Drop_Money(client, amount);
-					PrintHintText(client, "Выкинул %d$", amount);
-				}
-				
-				else if (amount < money[client] || amount == money[client]) PrintHintText(client, "Сумма должна быть не меньше 1$");
-				else if (!amount) PrintHintText(client, "Неправильная сумма!");
-				else if (amount > money[client]) PrintHintText(client, "Сумма не может быть больше наличных!");
-				else if (amount < 0 || amount == 0) PrintHintText(client, "Сумма должна быть не меньше 1$");
-			}
-			else PrintHintText(client, "У тебя нет денег!");
+public Action sm_dropmoney(int client, int args) {
+	if (client && IsClientInGame(client) && IsPlayerAlive(client)) {
+		if (args != 1) {
+			ReplyToCommand(client, "Используй: sm_dropmoney <сумма> или sm_drop_money <сумма>");
+			return Plugin_Handled;
 		}
-		else ReplyToCommand(client, "Используй: sm_drop_money <сумма>");
+		
+		int ply_money = GetEntProp(client, Prop_Send, "m_iAccount");
+		
+		char arg[64];
+		GetCmdArg(1, arg, sizeof(arg));
+		int amount = StringToInt(arg);
+		
+		if (ply_money > 0) {
+			if (amount > 0) {
+				if (amount > ply_money) amount = ply_money;
+				SetEntProp(client, Prop_Send, "m_iAccount", ply_money - amount);
+				Drop_Money(client, amount);
+				PrintHintText(client, "Выкинул $%d", amount);
+			}
+			
+			else if (amount < 1 || amount > ply_money) PrintHintText(client, "Некорректная сумма, на счету $%d", ply_money);
+		} else PrintHintText(client, "У тебя нет денег!");
 	}
 	return Plugin_Handled;
 }
 
-void Drop_Money(int client, int amount)
-{
+bool Drop_Money(int client, int amount) {
 	int ent;
-	if((ent = CreateEntityByName("prop_physics")) != -1)
-	{
+	if((ent = CreateEntityByName("prop_physics")) != -1) {
 		float origin[3];
 		GetClientEyePosition(client, origin);
 		
@@ -84,58 +70,75 @@ void Drop_Money(int client, int amount)
 		
 		SetEntProp(ent, Prop_Send, "m_usSolidFlags", 8);
 		SetEntProp(ent, Prop_Send, "m_CollisionGroup", 11);
+		return true;
 	}
+	return false;
 }
 
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3]){
-	if(!IsClientInGame(client)) return;
+	if (!IsClientInGame(client)) return Plugin_Handled;
 	
-	if(buttons & IN_USE)
-	{
-		if(IsPlayerAlive(client))
-		{ 
-			int Ent;
-			char Classname[32];
-		   
-			Ent = GetClientAimTarget(client, false);
-		   
-			if (Ent != -1 && IsValidEntity(Ent))
-			{
-				float origin[3];
-				float clientent[3];
-			   
-				GetEntPropVector(Ent, Prop_Send, "m_vecOrigin", origin);
-				GetClientAbsOrigin(client, clientent);
-			   
-				float distance = GetVectorDistance(origin, clientent);
-				if (distance < 100)
-				{
-					GetEdictClassname(Ent, Classname, sizeof(Classname));
-				   
+	if (IsPlayerAlive(client)){
+		if (buttons & IN_USE && g_bPressedUse[client] == false) {
+			g_bPressedUse[client] = true;
+			g_flPressUse[client] = GetGameTime();
+		} 
+		else if (!(buttons & IN_USE) && g_bPressedUse[client] == true) {
+			g_bPressedUse[client] = false;
+			if ((GetGameTime() - g_flPressUse[client]) < 0.2){
+				int ent = AimTargetProp(client);
+				if (ent != -1 && IsValidEntity(ent)) {
 					char modelname[128];
-					GetEntPropString(Ent, Prop_Data, "m_ModelName", modelname, sizeof(modelname));
-				   
-					if (StrEqual(modelname, MONEY_MODEL))
-					{
-						char amount[32];
-						GetTargetName(Ent, amount, sizeof(amount));
-						
-						int money_set = GetEntProp(client, Prop_Send, "m_iAccount");
-						
-						if (0 < StringToInt(amount))
-						{
-							RemoveEdict(Ent);
-							SetEntProp(client, Prop_Send, "m_iAccount", money_set + StringToInt(amount));
-							PrintToChat(client, "Ты поднял %d$", StringToInt(amount));
-						}	
+					GetEntPropString(ent, Prop_Data, "m_ModelName", modelname, sizeof(modelname));
+					
+					if (strcmp(modelname, MONEY_MODEL) == 0) {
+						float origin[3], clientent[3];
+						GetEntPropVector(ent, Prop_Send, "m_vecOrigin", origin);
+						GetClientAbsOrigin(client, clientent);
+						float distance = GetVectorDistance(origin, clientent);
+						if (distance <= 100) {
+							char amount[32];
+							GetEntPropString(ent, Prop_Data, "m_iName", amount, sizeof(amount));
+							if (0 < StringToInt(amount)) {
+								RemoveEdict(ent);
+								SetEntProp(client, Prop_Send, "m_iAccount", GetEntProp(client, Prop_Send, "m_iAccount") + StringToInt(amount));
+								PrintToChat(client, "Ты поднял \x04$%d", StringToInt(amount));
+								return Plugin_Handled;
+							}
+						}
 					}
 				}
 			}
 		}
 	}
+	return Plugin_Continue;
 }
 
-void GetTargetName(int entity, char[] buffer, int maxlen)
-{
-	GetEntPropString(entity, Prop_Data, "m_iName", buffer, maxlen);
+public void OnClientPutInServer(int client) {
+	g_bPressedUse[client] = false;
+	g_flPressUse[client] = -1.0;
+}
+
+stock int AimTargetProp(int client) {
+    float m_vecOrigin[3],
+          m_angRotation[3];
+ 
+    GetClientEyePosition(client, m_vecOrigin);
+    GetClientEyeAngles(client, m_angRotation);
+ 
+    Handle tr = TR_TraceRayFilterEx(m_vecOrigin, m_angRotation, MASK_VISIBLE, RayType_Infinite, TRDontHitSelf, client);
+    if (TR_DidHit(tr)) {
+        int pEntity = TR_GetEntityIndex(tr);
+        if (MaxClients < pEntity) {
+            delete tr;
+            return pEntity;
+        }
+    }
+ 
+    delete tr;
+    return -1;
+}
+ 
+public bool TRDontHitSelf(int entity, int mask, any data) {
+    return !(entity == data);
 }
